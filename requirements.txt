@@ -7,7 +7,6 @@ torch
 networkx
 pyarrow
 fastparquet
-pickle
 networkx
 node2vec
 tqdm
