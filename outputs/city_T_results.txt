@@ -1,0 +1,23 @@
+Manhattan (only non-masked users):  17.79617685185185
+
+HUMAN METRICS (only non-masked users)
+exact_match                    0.298905
+l1_mean_cells                  17.796177
+l1_median_cells                4.000000
+l2_mean_cells                  13.551091
+l2_mean_m                      6775.545415
+l2_median_cells                3.000000
+l2_median_m                    1500.000000
+move_rate_abs_err              0.017058
+move_rate_gt                   0.182333
+move_rate_pred                 0.165275
+n_points                       1080000
+unique_cells_gt                8465
+unique_cells_pred              5861
+unique_cells_ratio_pred_over_gt 0.692380
+within_0_cells_L2              0.298905
+within_1_cells_L2              0.390034
+within_2_cells_L2              0.453456
+within_5_cells_L2              0.585746
+
+geobleu ?
