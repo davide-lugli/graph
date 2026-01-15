@@ -1,0 +1,9 @@
+jupyter
+pandas
+numpy
+matplotlib
+scikit-learn
+torch
+networkx
+pyarrow
+fastparquet
