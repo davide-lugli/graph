@@ -197,20 +197,6 @@ def cosine_best(proto_vec, candidates, id2idx, E, E_norm, node_list):
     best_idx = int(cand_idx[best_local])
     return int(node_list[best_idx])
 
-def cosine_best_old(proto_vec, candidates, emb):
-    # return candidate with max cosine similarity
-    pv = proto_vec
-    pv_norm = np.linalg.norm(pv) + 1e-9
-    best_c, best_s = None, -1e9
-    for c in candidates:
-        v = emb.get(c)
-        if v is None:
-            continue
-        s = float(np.dot(pv, v) / (pv_norm * (np.linalg.norm(v) + 1e-9)))
-        if s > best_s:
-            best_s, best_c = s, c
-    return best_c
-
 def run_city(city, city_train_path, city_test_path, out_path,
              fill_masked_only=False,
              use_cache=True,
@@ -377,21 +363,6 @@ def eval_manhattan(test_pred, test_gt, masked_uids=None):
 
     return float((dx + dy).mean())
 
-def trajectories_from_df(df, xcol, ycol):
-    # returns dict: uid -> list of (x,y) ordered by d,t
-    out = {}
-    for uid, g in df.sort_values(["uid","d","t"]).groupby("uid"):
-        out[int(uid)] = list(zip(g[xcol].astype(int), g[ycol].astype(int)))
-    return out
-
-def make_holdout_split(train_df, holdout_days=range(46,61)):
-    train_in = train_df[~train_df["d"].isin(holdout_days)].copy()
-    gt_holdout = train_df[train_df["d"].isin(holdout_days)].copy()
-    masked_holdout = gt_holdout.copy()
-    masked_holdout["x"] = 999
-    masked_holdout["y"] = 999
-    return train_in, masked_holdout, gt_holdout
-
 def align_pred_gt(pred_df, gt_df, only_days=None, masked_uids=None):
     need = {"uid", "d", "t", "x", "y"}
     if not need.issubset(pred_df.columns) or not need.issubset(gt_df.columns):
@@ -474,21 +445,6 @@ def eval_geobleu(pred_df, gt_df, masked_uids=None, only_days=None, n=5, beta=0.5
 
     return float(geobleu.calc_geobleu_bulk(gen, ref, processes=processes))
 
-def print_metrics(title, geobleu_val, human):
-    print("\n" + "="*60)
-    print(title)
-    print("="*60)
-    if geobleu_val is None:
-        print("GEO-BLEU: (skipped) installa 'geobleu' se lo vuoi")
-    else:
-        print(f"GEO-BLEU: {geobleu_val:.6f}")
-    for k in sorted(human.keys()):
-        v = human[k]
-        if isinstance(v, float):
-            print(f"{k:30s} {v:.6f}")
-        else:
-            print(f"{k:30s} {v}")
-
 def eval_city(test_pred, test_gt, masked_uids=None, output=None):
     print("Evaluating city predictions...")
     # Manhattan solo su non-masked
@@ -552,6 +508,5 @@ def main():
 
         eval_city(test_pred, test_gt, masked_uids=masked_uids, output=output_metrics)
     
-
 if __name__ == "__main__":
     main()
