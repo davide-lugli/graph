@@ -10,7 +10,7 @@ import networkx as nx
 from node2vec import Node2Vec
 from tqdm import tqdm
 
-CITIES = ['A', 'B', 'C', 'D']
+CITIES = ['A']
 SKIP_GEOBLEU = True
 GRID = 200
 CELL_SIZE_M = 500  # 500m per cella
