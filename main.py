@@ -7,8 +7,6 @@ import pandas as pd
 import numpy as np
 from pecanpy import pecanpy as p2v
 from collections import defaultdict, Counter
-import networkx as nx
-from node2vec import Node2Vec
 from tqdm import tqdm
 
 CITIES = ['TB']
@@ -246,6 +244,55 @@ def build_prototypes(train_df, emb):
     return proto
 
 '''
+Costruisce le top-K transizioni per ogni cella
+Ritorna dict: prev_cell -> [next_cell1, next_cell2, ...] (ordinati per frequenza)
+'''
+def build_topk_transitions(train_df, K=30): 
+    df = train_df.sort_values(["uid", "d", "t"])
+
+    uid = df["uid"].to_numpy(dtype=np.int32)
+    x = df["x"].to_numpy(dtype=np.int16)
+    y = df["y"].to_numpy(dtype=np.int16)
+    
+    cells = (x.astype(np.int32) - 1) * GRID + (y.astype(np.int32) - 1)
+    
+    same_user = uid[1:] == uid[:-1]
+    src = cells[:-1][same_user]
+    dst = cells[1:][same_user] # drop self loops
+    
+    m = src != dst
+    src = src[m].astype(np.int32)
+    dst = dst[m].astype(np.int32)
+    
+    M = GRID * GRID # 40000
+    
+    key = src.astype(np.int64) * M + dst.astype(np.int64)
+    uniq, cnt = np.unique(key, return_counts=True)
+    src_u = (uniq // M).astype(np.int32)
+    dst_u = (uniq % M).astype(np.int32)
+    w_u = cnt.astype(np.int32) # raggruppa per src e tieni top-K
+    
+    topk = {}
+    order = np.argsort(src_u, kind="mergesort")
+    
+    src_u, dst_u, w_u = src_u[order], dst_u[order], w_u[order]
+    i = 0
+    n = len(src_u)
+    
+    while i < n:
+        u = int(src_u[i])
+        j = i
+    
+        while j < n and src_u[j] == src_u[i]:
+            j += 1 # per questo u, prendi top-K per weight
+            idx = np.argsort(w_u[i:j])[::-1]
+            best = dst_u[i:j][idx][:K]
+            topk[u] = best.astype(np.int32).tolist()
+            i = j
+    
+    return topk
+
+'''
 Training di Node2Vec usando PecanPy a partire da un file edgelist pesato (cella → cella con conteggio transizioni)
 In pratica:
 1. Legge il grafo (diretto e pesato) creato con build_edgelist_file
@@ -310,7 +357,21 @@ Pipeline di train e prediction per una città:
 3. Fa prediction su TUTTI gli utenti del test set
 4. Ritorna DataFrame test con predizioni e lista masked_uids
 '''
-def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, cache_dir="cache", n2v_dim=64, n2v_walk_length=20, n2v_num_walks=10, n2v_window=10, n2v_workers=4, topN_user=200, topM_ctx=200):
+def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, cache_dir="cache", 
+    n2v_dim=64, 
+    n2v_walk_length=20, 
+    n2v_num_walks=10, 
+    n2v_window=10, 
+    n2v_workers=4, 
+    n2v_p=1.0,
+    n2v_q=2.0,
+    n2v_mode="SparseOTF",
+    n2v_directed=True,
+    n2v_extend=False,
+    topN_user=100, 
+    topM_ctx=100,
+    topK_trans=30
+):
     print(f"Running city pipeline for CITY={city}")
 
     # Legge i CSV di train e test
@@ -339,11 +400,13 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         "n2v_workers": n2v_workers,
         "topN_user": topN_user,
         "topM_ctx": topM_ctx,
+        "topK_trans": topK_trans
     }
 
     # Inizializza a None: quando carica cache o ricostruisce li riempie
     emb = None
     proto = None
+    topk_transitions = None
     user_top = None
     ctx_top = None
     user_mode = None
@@ -356,6 +419,7 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         if payload.get("cache_key") == cache_key:
             emb = payload["emb"]
             proto = payload["proto"]
+            topk_transitions = payload["topk_transitions"]
             user_top = payload["user_top"]
             ctx_top = payload["ctx_top"]
             user_mode = payload["user_mode"]
@@ -385,9 +449,11 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
             num_walks=n2v_num_walks,
             window=n2v_window,
             workers=n2v_workers,
-            mode="SparseOTF",
-            directed=True,
-            extend=True
+            p=n2v_p,
+            q=n2v_q,
+            mode=n2v_mode,
+            directed=n2v_directed,
+            extend=n2v_extend
         )
 
         print("Graph and embeddings built.")
@@ -396,6 +462,9 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         # Prototipi embedding medi per bucket (uid, context_id(d,t))
         # Serve per avere una "firma" di dove sta l'utente in quel contesto
         proto = build_prototypes(train_used, emb)
+
+        # Transizioni top-K globali: prev_cell -> top-K next cells
+        topk_transitions = build_topk_transitions(train_used, K=topK_trans)
 
         # Pool candidati fallback: celle più frequenti per utente e per contesto
         user_top = top_cells_by_user(train_used, topN=topN_user)
@@ -416,16 +485,17 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
                 "cache_key": cache_key,
                 "emb": emb,
                 "proto": proto,
+                "topk_transitions": topk_transitions,
                 "user_top": user_top,
                 "ctx_top": ctx_top,
-                "user_mode": user_mode
+                "user_mode": user_mode,
             })
             print(f"Saved cache: {cache_file}")
 
     # Sanity check: se qualcosa è rimasto None, la pipeline è rotta e abortisce
     if emb is None or proto is None:
         raise RuntimeError("Embeddings or prototypes not available.")
-    if user_top is None or ctx_top is None or user_mode is None:
+    if user_top is None or ctx_top is None or user_mode is None or topk_transitions is None:
         raise RuntimeError("Candidate pools not available.")
 
     # Prepara strutture NumPy per cosine_best: node_list, id2idx, E, E_norm
@@ -436,14 +506,19 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
     # PREDICT ON ALL TEST
     # --------------------
 
+    # Si assicura che il test sia in ordine temporale per utente
+    test = test.sort_values(["uid", "d", "t"]).reset_index(drop=True)
+
     print("Predicting on test set...")
 
     preds_x, preds_y = [], []
     
-    # Itera riga per riga sul test set 
-    test_rows = test.itertuples(index=False)
-    test_rows = tqdm(test_rows, total=len(test), desc="Predicting", unit="row")
-    for r in test_rows:
+    # Cella precedente per ciascun uid, aggiornato man mano (usa GT se disponibile, altrimenti pred)
+    prev_cell = {}
+
+    # Itera riga per riga sul test set
+    test_rows = tqdm(test.itertuples(index=False), total=len(test), desc="Predicting", unit="row")
+    for i, r in enumerate(test_rows):
         # Estrae i campi principali della riga
         # uid: utente, d: giorno, t: timeslot
         uid = int(r.uid); d = int(r.d); t = int(r.t) # type: ignore
@@ -455,30 +530,42 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         # Se non esiste, vuol dire che nel train non ha mai visto quell'utente in quel contesto
         p = proto.get((uid, ctx))
 
+        # Cella precedente per questo uid
+        prev = prev_cell.get(uid)
+
         # c = cella predetta (cell_id)
         c = None
 
+        # Costruisce candidati:
+        # - user_top[uid]: celle più frequentate da quell'utente (prior personale)
+        # - ctx_top[ctx]: celle più popolari in quel contesto (prior globale)
+        # Elimina duplicati con set()
+        cand = set(user_top.get(uid, [])) | set(ctx_top.get(ctx, []))
+
+        # Aggiungi candidati dalle transizioni della cella precedente
+        if prev is not None:
+            nxt = topk_transitions.get(prev)
+            if nxt:
+                cand.update(nxt)  # restringe molto verso mosse realistiche
+
         # Prima scelta: se ha un prototipo cerca il candidato con massima cosine similarity con esso
-        if p is not None:
-            # Costruisce candidati:
-            # - user_top[uid]: celle più frequentate da quell'utente (prior personale)
-            # - ctx_top[ctx]: celle più popolari in quel contesto (prior globale)
-            # Elimina duplicati con set()
-            cand = set(user_top.get(uid, [])) | set(ctx_top.get(ctx, []))
+        if p is not None and cand:
+            c = cosine_best(p, cand, id2idx, E, E_norm, node_list)
 
-            if cand:
-                # Sceglie la cella candidata con embedding più simile al prototipo p.
-                # Se nessun candidato ha embedding, cosine_best ritorna None.
-                c = cosine_best(p, cand, id2idx, E, E_norm, node_list)
+        # Seconda scelta: se non ha prototipo o cosine_best fallisce, ma hai prev, usa la transizione più frequente
+        if c is None and prev is not None:
+            nxt = topk_transitions.get(prev)
+            if nxt:
+                c = int(nxt[0])
 
-        # Seconda scelta: se non ha prototipo o cosine_best non ha trovato nulla, usa la cella più frequente in assoluto per quell'utente
+        # Terza scelta: usa la cella più frequente in assoluto per quell'utente
         if c is None:
             c = user_mode.get(uid)
 
-        # Terza scelta: se ancora nulla (es. utente nuovo), usa la cella più popolare in quel contesto
+        # Quarta scelta: se ancora nulla (es. utente nuovo), usa la cella più popolare in quel contesto
         if c is None:
             ctx_list = ctx_top.get(ctx, [])
-
+            
             # Se non esiste la cella più popolare per quel contesto, prende una qualsiasi cella dall'embedding
             c = ctx_list[0] if ctx_list else next(iter(emb.keys()))
 
@@ -486,7 +573,11 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         x, y = decode_cell(c)
 
         # Salva predizioni per questa riga
-        preds_x.append(x); preds_y.append(y)
+        preds_x.append(x)
+        preds_y.append(y)
+
+        # Aggiorna cella precedente per questo uid usando la predizione
+        prev_cell[uid] = c
 
     # Aggiunge colonne predizioni al DataFrame test
     test["pred_x"] = preds_x

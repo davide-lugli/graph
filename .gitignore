@@ -4,3 +4,5 @@ dataset/*
 geobleu/*
 geobleu
 cache/*
+outputs/*.csv
+outputs/*/*.csv

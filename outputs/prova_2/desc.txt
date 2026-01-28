@@ -1,0 +1,27 @@
+city_TB: test set of first 10.000 users extracted from city_A
+
+Iperparameters:
+run_city(
+  n2v_dim=64, 
+  n2v_walk_length=20, 
+  n2v_num_walks=10, 
+  n2v_window=10, 
+  n2v_workers=4, 
+  n2v_p=1.0,
+  n2v_q=2.0,
+  n2v_mode="SparseOTF",
+  n2v_directed=True,
+  n2v_extend=False,
+  topN_user=100, 
+  topM_ctx=100,
+  topK_trans=30
+)
+
+Prediction strategy:
+1. Prototype similarity where candidates are:
+  - Top N frequent cells for that user
+  - Top M popular cells for that context
+  - Top K transitions from previous cell
+2. Top transition from cell
+3. Most frequent cell for user
+4. Most popular cell for context
