@@ -1,0 +1,13 @@
+city_TB: test set of first 10.000 users extracted from city_A
+
+n2v_dim=64,
+n2v_walk_length=20,
+n2v_num_walks=10,
+n2v_window=10,
+n2v_workers=4,
+topN_user=200,
+topM_ctx=200
+
+1. Prototype similarity
+2. Most frequent cell for user
+3. Most popular cell for contest
