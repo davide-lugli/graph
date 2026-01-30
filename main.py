@@ -9,7 +9,7 @@ from pecanpy import pecanpy as p2v
 from collections import defaultdict, Counter
 from tqdm import tqdm
 
-CITIES = ['TB']
+CITIES = ['A']
 SKIP_GEOBLEU = True
 GRID = 200
 CELL_SIZE_M = 500  # 500m per cella
@@ -109,6 +109,14 @@ def load_cache(path):
 ### PREDICTION
 
 '''
+Semplice distanza Manhattan tra due celle (x1,y1) e (x2,y2)
+'''
+def manhattan_cells(a, b):
+    ax, ay = decode_cell(a)
+    bx, by = decode_cell(b)
+    return abs(ax - bx) + abs(ay - by)
+
+'''
 Estrae le top-N celle più visitate per ogni utente nel train set
 '''
 def top_cells_by_user(train_df, topN=200):
@@ -143,40 +151,67 @@ Prepara strutture per cosine_best fast:
 - id2idx: mapping cell_id -> row index
 - E: embedding matrix (N, dim)
 - E_norm: norma per ogni embedding (N,)
+- xs, ys: coordinate x,y per ogni cella (N,)
 '''
 def prepare_embedding_index(emb: dict):
-    node_list = np.array(list(emb.keys()), dtype=np.int32)
-    id2idx = {int(n): i for i, n in enumerate(node_list)}
-    E = np.stack([emb[int(n)] for n in node_list]).astype(np.float32)
+    node_list = np.array(list(emb.keys()), dtype=np.int64)
+    E = np.vstack([emb[int(k)] for k in node_list]).astype(np.float32)
     E_norm = np.linalg.norm(E, axis=1).astype(np.float32) + 1e-9
-    return node_list, id2idx, E, E_norm
+    id2idx = {int(nid): i for i, nid in enumerate(node_list.tolist())}
+
+    # Precompute x,y for each node in same row order as E
+    xs = np.empty(len(node_list), dtype=np.int16)
+    ys = np.empty(len(node_list), dtype=np.int16)
+    for i, nid in enumerate(node_list):
+        x, y = decode_cell(int(nid))
+        xs[i] = x
+        ys[i] = y
+
+    return node_list, id2idx, E, E_norm, xs, ys
 
 '''
 Ritorna il candidate (cell_id) con massima cosine similarity con proto_vec
+Sfrutta la distanza dalla cella precedente per penalizzare candidati troppo lontani
 '''
-def cosine_best(proto_vec, candidates, id2idx, E, E_norm, node_list):
-    if proto_vec is None:
+def cosine_best_penalized(
+    p: np.ndarray,
+    cand: set[int],
+    id2idx: dict[int, int],
+    E: np.ndarray,
+    E_norm: np.ndarray,
+    node_list: np.ndarray,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    prev: int | None,
+    lam: float = 0.05,      # tune: 0.02..0.10 is a sane start
+    stay_margin: float = 0.01,  # optional "stay unless clearly better"
+):
+    idxs = [id2idx.get(int(c)) for c in cand]
+    idxs = np.array([i for i in idxs if i is not None], dtype=np.int32)
+    if idxs.size == 0:
         return None
 
-    cand_idx = []
-    for c in candidates:
-        i = id2idx.get(int(c))
-        if i is not None:
-            cand_idx.append(i)
+    p = p.astype(np.float32, copy=False)
+    p_norm = float(np.linalg.norm(p)) + 1e-12
 
-    if not cand_idx:
-        return None
+    sims = (E[idxs] @ p) / (E_norm[idxs] * p_norm + 1e-12)
 
-    cand_idx = np.array(cand_idx, dtype=np.int32)
+    if prev is not None:
+        prev_idx = id2idx.get(int(prev))
+        if prev_idx is not None:
+            px, py = int(xs[prev_idx]), int(ys[prev_idx])
+            dist = np.abs(xs[idxs].astype(np.int32) - px) + np.abs(ys[idxs].astype(np.int32) - py)
+            sims = sims - lam * dist.astype(np.float32)
 
-    pv = np.asarray(proto_vec, dtype=np.float32)
-    pv_norm = float(np.linalg.norm(pv) + 1e-9)
+            # Optional margin rule: if "stay" is close, just stay
+            stay_score = float((E[prev_idx] @ p) / (E_norm[prev_idx] * p_norm + 1e-12))
+            stay_score -= lam * 0.0
+            best_score = float(np.max(sims))
+            if stay_score >= best_score - stay_margin:
+                return int(prev)
 
-    scores = (E[cand_idx] @ pv) / (E_norm[cand_idx] * pv_norm)
-
-    best_local = int(np.argmax(scores))
-    best_idx = int(cand_idx[best_local])
-    return int(node_list[best_idx])
+    best_i = int(idxs[int(np.argmax(sims))])
+    return int(node_list[best_i])
 
 '''
 Trasforma le traiettorie in un grafo di transizioni cella→cella, pesato per frequenza
@@ -364,7 +399,7 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
     n2v_window=10, 
     n2v_workers=4, 
     n2v_p=1.0,
-    n2v_q=2.0,
+    n2v_q=1.0,
     n2v_mode="SparseOTF",
     n2v_directed=True,
     n2v_extend=False,
@@ -374,9 +409,11 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
 ):
     print(f"Running city pipeline for CITY={city}")
 
-    # Legge i CSV di train e test
+    # Legge i CSV di train e test e li ordina
     train = pd.read_csv(city_train_path)
+    train = train.sort_values(["uid", "d", "t"]).reset_index(drop=True)
     test  = pd.read_csv(city_test_path)
+    test = test.sort_values(["uid", "d", "t"]).reset_index(drop=True)
 
     # Trova gli utenti "masked": cioè quelli che nel test hanno almeno una riga con x=999 o y=999
     masked_uids = set(test.loc[(test["x"] == 999) | (test["y"] == 999), "uid"].unique())
@@ -500,21 +537,26 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
 
     # Prepara strutture NumPy per cosine_best: node_list, id2idx, E, E_norm
     # Serve per poter fare cosine su tanti candidati in prediction senza loop pesanti
-    node_list, id2idx, E, E_norm = prepare_embedding_index(emb)
+    node_list, id2idx, E, E_norm, xs, ys = prepare_embedding_index(emb)
 
     # --------------------
     # PREDICT ON ALL TEST
     # --------------------
 
-    # Si assicura che il test sia in ordine temporale per utente
-    test = test.sort_values(["uid", "d", "t"]).reset_index(drop=True)
-
     print("Predicting on test set...")
 
     preds_x, preds_y = [], []
     
-    # Cella precedente per ciascun uid, aggiornato man mano (usa GT se disponibile, altrimenti pred)
-    prev_cell = {}
+    # Recupera ultima posizione del giorno 60 del train set per ogni uid
+    last_train_cell = (
+        train.groupby("uid")
+        .apply(lambda g: cell_id(int(g.iloc[-1]["x"]), int(g.iloc[-1]["y"])))
+        .to_dict()
+    )
+
+    # Cella precedente per ciascun uid, aggiornato man mano
+    # Viene inizializzato all'ultima posizione del giorno 60 del train set per ogni uid
+    prev_cell = dict(last_train_cell)
 
     # Itera riga per riga sul test set
     test_rows = tqdm(test.itertuples(index=False), total=len(test), desc="Predicting", unit="row")
@@ -542,6 +584,10 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         # Elimina duplicati con set()
         cand = set(user_top.get(uid, [])) | set(ctx_top.get(ctx, []))
 
+        # Aggiunge cella precedente come candidato
+        if prev is not None:
+            cand.add(prev)
+
         # Aggiungi candidati dalle transizioni della cella precedente
         #if prev is not None:
         #    nxt = topk_transitions.get(prev)
@@ -550,7 +596,10 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
 
         # Prima scelta: se ha un prototipo cerca il candidato con massima cosine similarity con esso
         if p is not None and cand:
-            c = cosine_best(p, cand, id2idx, E, E_norm, node_list)
+            c = cosine_best_penalized(
+                p, cand, id2idx, E, E_norm, node_list, xs, ys,
+                prev=prev, lam=0.05, stay_margin=0.01
+            )
 
         # Seconda scelta: se non ha prototipo o cosine_best fallisce, ma hai prev, usa la transizione più frequente
         #if c is None and prev is not None:
@@ -795,6 +844,11 @@ def main():
             n2v_num_walks=10,
             n2v_window=10,
             n2v_workers=4,
+            n2v_p=1.0,
+            n2v_q=1.0,
+            n2v_mode="SparseOTF",
+            n2v_directed=True,
+            n2v_extend=False,
             topN_user=200,
             topM_ctx=200
         )

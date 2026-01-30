@@ -1,0 +1,25 @@
+city_A
+
+Iperparameters:
+run_city(
+  n2v_dim=64, 
+  n2v_walk_length=20, 
+  n2v_num_walks=10, 
+  n2v_window=10, 
+  n2v_workers=4, 
+  n2v_p=1.0,
+  n2v_q=1.0,
+  n2v_mode="SparseOTF",
+  n2v_directed=True,
+  n2v_extend=False,
+  topN_user=200, 
+  topM_ctx=200
+)
+
+Prediction strategy:
+1. Prototype similarity with distance penalty, where candidates are:
+  - Previous cell
+  - Top N frequent cells for that user
+  - Top M popular cells for that context
+2. Most frequent cell for user
+3. Most popular cell for context
