@@ -543,20 +543,20 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         cand = set(user_top.get(uid, [])) | set(ctx_top.get(ctx, []))
 
         # Aggiungi candidati dalle transizioni della cella precedente
-        if prev is not None:
-            nxt = topk_transitions.get(prev)
-            if nxt:
-                cand.update(nxt)  # restringe molto verso mosse realistiche
+        #if prev is not None:
+        #    nxt = topk_transitions.get(prev)
+        #    if nxt:
+        #        cand.update(nxt)
 
         # Prima scelta: se ha un prototipo cerca il candidato con massima cosine similarity con esso
         if p is not None and cand:
             c = cosine_best(p, cand, id2idx, E, E_norm, node_list)
 
         # Seconda scelta: se non ha prototipo o cosine_best fallisce, ma hai prev, usa la transizione più frequente
-        if c is None and prev is not None:
-            nxt = topk_transitions.get(prev)
-            if nxt:
-                c = int(nxt[0])
+        #if c is None and prev is not None:
+        #    nxt = topk_transitions.get(prev)
+        #    if nxt:
+        #        c = int(nxt[0])
 
         # Terza scelta: usa la cella più frequente in assoluto per quell'utente
         if c is None:
