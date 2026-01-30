@@ -416,7 +416,7 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
     test = test.sort_values(["uid", "d", "t"]).reset_index(drop=True)
 
     # Trova gli utenti "masked": cioè quelli che nel test hanno almeno una riga con x=999 o y=999
-    masked_uids = set(test.loc[(test["x"] == 999) | (test["y"] == 999), "uid"].unique())
+    masked_uids = set(test.loc[(test["x"] == 999) | (test["y"] == 999), "uid"].unique()) #type: ignore
 
     # --------------------
     # TRAIN ON ALL USERS AND CACHE
@@ -515,6 +515,7 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
             user_mode[int(uid)] = Counter(cells).most_common(1)[0][0] # type: ignore
 
         print("Prototypes and candidate pools built.")
+        print("Saving cache...")
 
         # Salva cache compressa: così la prossima run evita Node2Vec (parte più costosa)
         if use_cache:
