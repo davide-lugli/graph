@@ -1,7 +1,8 @@
 # Human Mobility Prediction (Graph + Node2Vec)
 
 This repository contains a possible solution to the [ACM SIGSPATIAL Cup 2025: Human Mobility Prediction Challenge](https://sigspatial2025.sigspatial.org/giscup/index.html), developed as the exam project for the Graph Analytis course @ Unimore.
-The full pipeline is implemented: **train → predict → evaluate** using a **weighted directed cell-transition graph** and **Node2Vec embeddings**.
+
+The full pipeline **train → predict → evaluate** is implemented using a **weighted directed cell-transition graph** and **Node2Vec embeddings**.
 
 ## Requirements
 
