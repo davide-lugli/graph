@@ -1,4 +1,5 @@
 import os
+import json
 import gzip
 import pickle
 import hashlib
@@ -9,9 +10,9 @@ from pecanpy import pecanpy as p2v
 from collections import defaultdict, Counter
 from tqdm import tqdm
 
-CITIES = ['A']
-SKIP_GEOBLEU = True
-GRID = 200
+CITIES = ['TB'] # Lista di città da processare
+SKIP_GEOBLEU = False # Setta a True per saltare calcolo GeoBLEU (più veloce per debug)
+GRID = 200 # 200x200 griglia
 CELL_SIZE_M = 500  # 500m per cella
 
 ### HELPERS ###
@@ -183,8 +184,8 @@ def cosine_best_penalized(
     xs: np.ndarray,
     ys: np.ndarray,
     prev: int | None,
-    lam: float = 0.05,      # tune: 0.02..0.10 is a sane start
-    stay_margin: float = 0.01,  # optional "stay unless clearly better"
+    lam: float = 0.001,
+    stay_margin: float = 0.01
 ):
     idxs = [id2idx.get(int(c)) for c in cand]
     idxs = np.array([i for i in idxs if i is not None], dtype=np.int32)
@@ -201,14 +202,16 @@ def cosine_best_penalized(
         if prev_idx is not None:
             px, py = int(xs[prev_idx]), int(ys[prev_idx])
             dist = np.abs(xs[idxs].astype(np.int32) - px) + np.abs(ys[idxs].astype(np.int32) - py)
-            sims = sims - lam * dist.astype(np.float32)
+            dist = np.minimum(dist, 10)          # clip a 10 celle
+            dist = dist.astype(np.float32) / 10  # ora in [0,1]
+            sims = sims - lam * dist
 
             # Optional margin rule: if "stay" is close, just stay
-            stay_score = float((E[prev_idx] @ p) / (E_norm[prev_idx] * p_norm + 1e-12))
-            stay_score -= lam * 0.0
-            best_score = float(np.max(sims))
-            if stay_score >= best_score - stay_margin:
-                return int(prev)
+            #stay_score = float((E[prev_idx] @ p) / (E_norm[prev_idx] * p_norm + 1e-12))
+            #stay_score -= lam * 0.0
+            #best_score = float(np.max(sims))
+            #if stay_score >= best_score - stay_margin:
+            #    return int(prev)
 
     best_i = int(idxs[int(np.argmax(sims))])
     return int(node_list[best_i])
@@ -405,7 +408,8 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
     n2v_extend=False,
     topN_user=100, 
     topM_ctx=100,
-    topK_trans=30
+    topK_trans=30,
+    distance_penalty_lambda=0.001
 ):
     print(f"Running city pipeline for CITY={city}")
 
@@ -437,7 +441,8 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         "n2v_workers": n2v_workers,
         "topN_user": topN_user,
         "topM_ctx": topM_ctx,
-        "topK_trans": topK_trans
+        "topK_trans": topK_trans,
+        "distance_penalty_lambda": distance_penalty_lambda,
     }
 
     # Inizializza a None: quando carica cache o ricostruisce li riempie
@@ -599,7 +604,7 @@ def run_city(city, city_train_path, city_test_path, out_path, use_cache=True, ca
         if p is not None and cand:
             c = cosine_best_penalized(
                 p, cand, id2idx, E, E_norm, node_list, xs, ys,
-                prev=prev, lam=0.05, stay_margin=0.01
+                prev=prev, lam=distance_penalty_lambda, stay_margin=0.01
             )
 
         # Seconda scelta: se non ha prototipo o cosine_best fallisce, ma hai prev, usa la transizione più frequente
@@ -817,7 +822,7 @@ def eval_city(test_df, masked_uids=None, output=None):
         "geobleu": gb
     }
     if output is not None:
-        import json
+        os.makedirs(os.path.dirname(output), exist_ok=True)
         with open(output, "w") as f:
             json.dump(metrics, f, indent=2)
         print(f"Saved metrics to {output}")
@@ -851,7 +856,8 @@ def main():
             n2v_directed=True,
             n2v_extend=False,
             topN_user=200,
-            topM_ctx=200
+            topM_ctx=200,
+            distance_penalty_lambda=0.01
         )
 
         # Evaluation

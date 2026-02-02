@@ -10,8 +10,8 @@ import csv
 from pathlib import Path
 
 
-IN_TRAIN = "dataset/preproc/city_A_trainmerged.csv"
-IN_TEST = "dataset/preproc/city_A_testmerged.csv"
+IN_TRAIN = "dataset/preproc/city_B_trainmerged.csv"
+IN_TEST = "dataset/preproc/city_B_testmerged.csv"
 OUT_TRAIN = "dataset/preproc/test/city_TB_trainmerged.csv"
 OUT_TEST = "dataset/preproc/test/city_TB_testmerged.csv"
 
