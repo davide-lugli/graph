@@ -1,4 +1,4 @@
-city_A
+city_TA: test set of first 10.000 users extracted from city_A
 
 Iperparameters:
 run_city(
@@ -13,7 +13,8 @@ run_city(
   n2v_directed=True,
   n2v_extend=False,
   topN_user=200, 
-  topM_ctx=200
+  topM_ctx=200,
+  distance_penalty_lambda=0.001
 )
 
 Prediction strategy:
